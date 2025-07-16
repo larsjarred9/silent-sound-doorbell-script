@@ -4,8 +4,8 @@
 ```curl -O https://raw.githubusercontent.com/larsjarred9/silent-sound-doorbell-script/refs/heads/deployer/deployer.sh```
 
 ### 2. Give the right permissions
-```chmod +x scriptname.sh```
+```chmod +x deployer.sh```
 
 ### 3. Run the script
-```./scriptname.sh```
+```./deployer.sh```
 
