@@ -56,7 +56,7 @@ set -e
 echo "🔧 Installing Silent Sound Doorbell..."
 
 # Constants
-PROJECT_DIR="/var/silentdoorbell/"
+PROJECT_DIR="/var/silentdoorbell"
 REPO_URL="https://github.com/larsjarred9/silent-sound-doorbell-script.git"
 SERVICE_NAME="device.service"
 SERVICE_FILE_PATH="/etc/systemd/system/$SERVICE_NAME"
