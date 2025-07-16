@@ -1,5 +1,39 @@
 #!/bin/bash
 
+# Check if git is installed, install if missing
+if ! command -v git &> /dev/null; then
+  echo "❌ Git not found. Installing git... 🛠️"
+  if command -v apt &> /dev/null; then
+    echo "📦 Updating package list..."
+    sudo apt update
+    echo "⬇️ Installing git package..."
+    sudo apt install git -y
+    echo "✅ Git installed successfully!"
+  else
+    echo "⚠️ Package manager apt not found. Please install git manually."
+    exit 1
+  fi
+else
+  echo "✅ Git is already installed. 👍"
+fi
+
+# Check if pip3 is installed, install if missing
+if ! command -v pip3 &> /dev/null; then
+  echo "❌ pip3 not found. Installing python3-pip... 🛠️"
+  if command -v apt &> /dev/null; then
+    echo "📦 Updating package list..."
+    sudo apt update
+    echo "⬇️ Installing python3-pip package..."
+    sudo apt install python3-pip -y
+    echo "✅ pip3 installed successfully!"
+  else
+    echo "⚠️ Package manager apt not found. Please install pip3 manually."
+    exit 1
+  fi
+else
+  echo "✅ pip3 is already installed. 👍"
+fi
+
 set -e
 
 echo "🔧 Installing Silent Sound Doorbell..."
