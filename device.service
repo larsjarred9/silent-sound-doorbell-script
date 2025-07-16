@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/python3 /home/pi/silentdoorbell/device_boot.py
+ExecStart=/usr/bin/python3 /var/silentdoorbell/device_boot.py
 Restart=always
 RestartSec=10
 
