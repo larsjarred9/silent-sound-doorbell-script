@@ -7,7 +7,7 @@ from pathlib import Path
 BASE_DIR = Path.home() / "silentdoorbell"
 SETTINGS_FILE = BASE_DIR / "settings.txt"
 
-SETUP_URL = "https://speetjens.speetjens/device/setup/"
+SETUP_URL = "https://silentdoorbell.speetjens.net/device/setup/"
 HEARTBEAT_INTERVAL = 180  # 3 minutes
 RETRY_INTERVAL = 60       # 1 minute
 
@@ -50,7 +50,7 @@ def setup_device():
         time.sleep(RETRY_INTERVAL)
 
 def send_heartbeat(serial_number):
-    url = f"https://speetjens.speetjens/device/{serial_number}"
+    url = f"https://silentdoorbell.speetjens.net/device/{serial_number}"
     try:
         print(f"Sending heartbeat to {url}")
         response = requests.get(url, timeout=10)
