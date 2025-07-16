@@ -17,6 +17,23 @@ else
   echo "✅ Git is already installed. 👍"
 fi
 
+# Check if python3 is installed, install if missing
+if ! command -v python3 &> /dev/null; then
+  echo "❌ Python 3 not found. Installing python3... 🐍"
+  if command -v apt &> /dev/null; then
+    echo "📦 Updating package list..."
+    sudo apt update
+    echo "⬇️ Installing python3..."
+    sudo apt install python3 -y
+    echo "✅ python3 installed successfully!"
+  else
+    echo "⚠️ Package manager apt not found. Please install python3 manually."
+    exit 1
+  fi
+else
+  echo "✅ python3 is already installed. 👍"
+fi
+
 # Check if pip3 is installed, install if missing
 if ! command -v pip3 &> /dev/null; then
   echo "❌ pip3 not found. Installing python3-pip... 🛠️"
@@ -45,13 +62,13 @@ SERVICE_NAME="device.service"
 SERVICE_FILE_PATH="/etc/systemd/system/$SERVICE_NAME"
 REQUIREMENTS_FILE="$PROJECT_DIR/requirements.txt"
 
-# 1. Ensure the project directory exists
+# Ensure the project directory exists
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "📂 Creating project directory..."
     mkdir -p "$PROJECT_DIR"
 fi
 
-# 2. Clone or update repo
+# Clone or update repo
 if [ -d "$PROJECT_DIR/.git" ]; then
     echo "🔄 Updating existing Git repo..."
     cd "$PROJECT_DIR"
@@ -66,7 +83,7 @@ else
     fi
 fi
 
-# 3. Install Python dependencies from requirements.txt
+# Install Python dependencies
 if [ -f "$REQUIREMENTS_FILE" ]; then
     echo "📦 Installing Python dependencies from requirements.txt..."
     pip3 install --user -r "$REQUIREMENTS_FILE"
@@ -74,11 +91,17 @@ else
     echo "ℹ️ No requirements.txt found, skipping pip install."
 fi
 
-# 4. Install systemd service
-echo "🛠 Installing systemd service..."
-sudo cp "$PROJECT_DIR/$SERVICE_NAME" "$SERVICE_FILE_PATH"
+# Install systemd service file (dynamic with %u and %h already in repo version)
+if [ -f "$PROJECT_DIR/$SERVICE_NAME" ]; then
+    echo "🛠 Installing systemd service..."
+    sudo cp "$PROJECT_DIR/$SERVICE_NAME" "$SERVICE_FILE_PATH"
+else
+    echo "❌ Service file $SERVICE_NAME not found in repo. Aborting."
+    exit 1
+fi
 
-# 5. Enable and start the service
+# Enable and start the service
+echo "🚀 Enabling and starting service..."
 sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME"
@@ -88,4 +111,4 @@ echo "✅ Installation complete!"
 echo "📂 Project directory: $PROJECT_DIR"
 echo "📄 settings.txt: $PROJECT_DIR/settings.txt"
 echo "🛠 Service file: $SERVICE_FILE_PATH"
-echo "📜 Logs: journalctl -u $SERVICE_NAME -f"
+echo "📜 View logs: journalctl -u $SERVICE_NAME -f"
