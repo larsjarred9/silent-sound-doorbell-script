@@ -8,6 +8,7 @@ BASE_DIR = Path.home() / "silentdoorbell"
 SETTINGS_FILE = BASE_DIR / "settings.txt"
 
 SETUP_URL = "https://silentdoorbell.speetjens.net/device/setup/"
+HEARTBEAT_URL = "https://silentdoorbell.speetjens.net/device/heartbeat/"
 HEARTBEAT_INTERVAL = 180  # 3 minutes
 RETRY_INTERVAL = 60       # 1 minute
 
@@ -50,10 +51,11 @@ def setup_device():
         time.sleep(RETRY_INTERVAL)
 
 def send_heartbeat(serial_number):
-    url = f"https://silentdoorbell.speetjens.net/device/{serial_number}"
     try:
-        print(f"Sending heartbeat to {url}")
-        response = requests.get(url, timeout=10)
+        print(f"Sending heartbeat to {HEARTBEAT_URL}")
+        response = requests.post(HEARTBEAT_URL, json={
+            "serial_number": serial_number
+        }, timeout=10)
         response.raise_for_status()
         print("Heartbeat sent successfully.")
     except Exception as e:
