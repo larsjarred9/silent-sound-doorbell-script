@@ -7,8 +7,8 @@ from pathlib import Path
 BASE_DIR = Path.home() / "silentdoorbell"
 SETTINGS_FILE = BASE_DIR / "settings.txt"
 
-SETUP_URL = "https://silentdoorbell.speetjens.net/device/setup/"
-HEARTBEAT_URL = "https://silentdoorbell.speetjens.net/device/heartbeat/"
+SETUP_URL = "https://silentdoorbell.speetjens.net/api/device/setup/"
+HEARTBEAT_URL = "https://silentdoorbell.speetjens.net/api/device/heartbeat/"
 HEARTBEAT_INTERVAL = 180  # 3 minutes
 RETRY_INTERVAL = 60       # 1 minute
 
