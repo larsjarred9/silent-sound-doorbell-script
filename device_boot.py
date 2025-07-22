@@ -4,11 +4,11 @@ import time
 import requests
 from pathlib import Path
 
-BASE_DIR = Path.home() / "silentdoorbell"
+BASE_DIR = Path("/var/silentdoorbell")
 SETTINGS_FILE = BASE_DIR / "settings.txt"
 
-SETUP_URL = "https://silentdoorbell.speetjens.net/api/device/setup/"
-HEARTBEAT_URL = "https://silentdoorbell.speetjens.net/api/device/heartbeat/"
+SETUP_URL = "http://192.168.68.114/api/device/setup/"
+HEARTBEAT_URL = "http://192.168.68.114/api/device/heartbeat/"
 HEARTBEAT_INTERVAL = 180  # 3 minutes
 RETRY_INTERVAL = 60       # 1 minute
 
