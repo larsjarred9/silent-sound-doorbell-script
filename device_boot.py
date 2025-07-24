@@ -25,13 +25,13 @@ HEADERS = {
 def load_settings():
     """Loads settings from the settings file, or returns defaults."""
     if not SETTINGS_FILE.exists():
-        return {"device_type": "prototype", "version": "0.1"}
+        return {"device_type": "1", "version": "0.1"}
     try:
         with open(SETTINGS_FILE, "r") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError) as e:
         print(f"⚠️ Could not read settings file, using defaults. Error: {e}")
-        return {"device_type": "prototype", "version": "0.1"}
+        return {"device_type": "1", "version": "0.1"}
 
 def save_settings(data):
     """Saves the given data to the settings file."""
@@ -53,7 +53,7 @@ def setup_device():
 
     print("🔧 Device not configured. Requesting new serial number...")
     payload = {
-        "device_type": settings.get("device_type", "prototype"),
+        "device_type": settings.get("device_type", "1"),
         "version": settings.get("version", "0.1")
     }
     print("🔄 Setup payload:", json.dumps(payload, indent=2))

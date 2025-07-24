@@ -1,4 +1,4 @@
 {
-  "type": "prototype",
+  "device_type": "1",
   "version": "0.1"
 }
