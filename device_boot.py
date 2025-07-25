@@ -5,6 +5,7 @@ from pathlib import Path
 import threading
 import subprocess
 import sys
+import os
 
 # --- Configuration ---
 BASE_DIR = Path("/var/silentdoorbell")
@@ -32,7 +33,10 @@ last_ring_time = 0
 
 # --- Helper Functions ---
 def load_or_create_settings():
-    """Loads settings from the settings file. If the file doesn't exist, it creates it with the default settings."""
+    """
+    Loads settings from the settings file. If the file doesn't exist,
+    it creates it with the default settings.
+    """
     if not SETTINGS_FILE.exists():
         print(f"⚠️ Settings file not found. Creating a new one at {SETTINGS_FILE}")
         save_settings(DEFAULT_SETTINGS)
@@ -58,7 +62,9 @@ def save_settings(data):
 
 # --- API Communication & Device Logic ---
 def setup_device():
-    """Ensures the device has a serial number, requesting one from the server if needed."""
+    """
+    Ensures the device has a serial number, requesting one from the server if needed.
+    """
     settings = load_or_create_settings()
     if "serial_number" in settings:
         print(f"✅ Device already configured with serial: {settings['serial_number']}")
@@ -149,7 +155,7 @@ def trigger_update():
 
 
 def send_ring(serial_number):
-    """Sends a doorbell ring event and controls the HomeWizard switch."""
+    """Determines local integration status, triggers the effect, and notifies the server."""
     global last_ring_time
     current_time = time.time()
 
@@ -159,43 +165,88 @@ def send_ring(serial_number):
 
     last_ring_time = current_time
 
-    ring_url = f"{API_BASE_URL}/{serial_number}/ring"
-    print(f"🔔 Sending ring event to: {ring_url}")
-    try:
-        requests.post(ring_url, headers=HEADERS, timeout=10).raise_for_status()
-        print("✅ Ring event sent to server successfully.")
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Network error during ring event: {e}")
-        return
-
+    # --- 1. Determine local integration status ---
     settings = load_or_create_settings()
     homewizard_ip = None
+    integration_status = "inactive"  # Default status
+
     if "integrations" in settings:
         for integration in settings["integrations"]:
             if integration.get("type") == "homewizard_socket":
                 homewizard_ip = integration.get("credentials", {}).get("local_ip")
                 break
 
-    if not homewizard_ip:
-        print("⚠️ HomeWizard IP not found in settings. Cannot control switch.")
-        return
+    if homewizard_ip:
+        # Try to activate the switch. This action determines the status.
+        if set_switch_state(homewizard_ip, {"power_on": True, "brightness": 255}):
+            integration_status = "active"
+            # If successful, start the blinking effect in a separate thread
+            threading.Thread(target=blink_effect, args=(homewizard_ip,)).start()
+        else:
+            integration_status = "error"
+    else:
+        print("⚠️ HomeWizard IP not found in settings. Status is 'inactive'.")
+        integration_status = "inactive"
 
-    toggle_switch(homewizard_ip, True)
-    threading.Timer(60.0, toggle_switch, args=[homewizard_ip, False]).start()
-
-
-def toggle_switch(ip_address, power_on):
-    """Sends a command to a HomeWizard smart switch."""
-    state_url = f"http://{ip_address}/api/v1/state"
-    payload = {"power_on": power_on}
-    action = "ON" if power_on else "OFF"
-
-    print(f"💡 Turning switch at {ip_address} {action}...")
+    # --- 2. Notify the main server with the determined status ---
+    ring_url = f"{API_BASE_URL}/{serial_number}/ring"
+    payload = {"status": integration_status}
+    print(f"🔔 Sending ring event to: {ring_url} with payload: {json.dumps(payload)}")
     try:
-        requests.put(state_url, json=payload, timeout=5).raise_for_status()
-        print(f"✅ Switch successfully turned {action}.")
+        requests.post(ring_url, json=payload, headers=HEADERS, timeout=10).raise_for_status()
+        print("✅ Ring event sent to server successfully.")
     except requests.exceptions.RequestException as e:
-        print(f"❌ Failed to turn switch {action}. Error: {e}")
+        print(f"❌ Network error during ring event: {e}")
+
+
+def set_switch_state(ip_address, payload):
+    """Sends a command payload to a HomeWizard smart switch."""
+    state_url = f"http://{ip_address}/api/v1/state"
+    print(f"💡 Sending state to {ip_address}: {json.dumps(payload)}")
+    try:
+        response = requests.put(state_url, json=payload, timeout=2)
+        response.raise_for_status()
+        return True
+    except requests.exceptions.RequestException:
+        # Don't print error here to avoid spamming the log during blinking
+        return False
+
+
+def blink_effect(ip_address, duration=60, interval=2.0):
+    """Controls the blinking effect of a switch for a given duration."""
+    # Note: The initial "power_on" is now handled in send_ring to determine the status.
+    # This function now only handles the subsequent blinking.
+    print(f"✨ Starting blink effect for {duration} seconds on {ip_address}")
+
+    end_time = time.time() + duration
+    is_dim = True  # Start by dimming since it's already at max brightness
+    while time.time() < end_time:
+        time.sleep(interval)
+        brightness = 50 if is_dim else 255
+        if not set_switch_state(ip_address, {"brightness": brightness}):
+            print("❌ Lost connection to switch during blink. Aborting effect.")
+            break  # Exit the loop if we can't communicate with the switch
+        is_dim = not is_dim
+
+    print(f"✨ Blink effect finished. Turning switch off.")
+    set_switch_state(ip_address, {"power_on": False})
+
+
+def command_listener(serial_number):
+    """Listens for user commands like 'ring' or 'exit' in a separate thread."""
+    while True:
+        try:
+            command = input()
+            if command.lower() == "ring":
+                print("⌨️  Manual ring command received.")
+                send_ring(serial_number)
+            elif command.lower() == "exit":
+                print("...Exiting program...")
+                # Use os._exit for a hard stop, necessary when threads are running
+                os._exit(0)
+        except (EOFError, KeyboardInterrupt):
+            print("\n...Exiting program...")
+            os._exit(0)
 
 
 # --- Main Execution ---
@@ -203,7 +254,13 @@ if __name__ == "__main__":
     settings = setup_device()
     serial = settings["serial_number"]
 
+    # Start the command listener in a separate thread
+    listener_thread = threading.Thread(target=command_listener, args=(serial,), daemon=True)
+    listener_thread.start()
+
     print("--- Device is running. Waiting for events. ---")
+    print("--- Type 'ring' to test, or 'exit' to quit. ---")
+
     while True:
         send_heartbeat(serial)
         print(f"--- Waiting for {HEARTBEAT_INTERVAL} seconds... ---")
