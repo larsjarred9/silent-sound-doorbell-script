@@ -51,6 +51,23 @@ else
   echo "✅ pip3 is already installed. 👍"
 fi
 
+# Check if python3-rpi.gpio is installed, install if missing
+if ! command -v python3-rpi.gpio &> /dev/null; then
+  echo "❌ python3-rpi.gpio not found. Installing python3-rpi.gpio... 🛠️"
+  if command -v apt &> /dev/null; then
+    echo "📦 Updating package list..."
+    sudo apt update
+    echo "⬇️ Installing python3-pip package..."
+    sudo apt install python3-rpi.gpio -y
+    echo "✅ python3-rpi.gpio installed successfully!"
+  else
+    echo "⚠️ Package manager apt not found. Please install python3-rpi.gpio manually."
+    exit 1
+  fi
+else
+  echo "✅ python3-rpi.gpio is already installed. 👍"
+fi
+
 set -e
 
 echo "🔧 Installing Silent Sound Doorbell..."
