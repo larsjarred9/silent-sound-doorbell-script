@@ -1,3 +1,8 @@
+# this is the latest working version we made togheter
+# when GPIO19 (Pin 35) is pressed, we should send a ring event (prevent holding the button)
+# also tell me what to put in requirements.txt since we prob need to use external libraries :)
+
+# --- Imports ---
 import json
 import time
 import requests
@@ -7,6 +12,14 @@ import subprocess
 import sys
 import os
 
+try:
+    import RPi.GPIO as GPIO
+    GPIO_AVAILABLE = True
+except (RuntimeError, ImportError):
+    print("⚠️ RPi.GPIO library not found or not running on a Pi. GPIO functionality disabled.")
+    GPIO_AVAILABLE = False
+
+
 # --- Configuration ---
 BASE_DIR = Path("/var/silentdoorbell")
 SETTINGS_FILE = BASE_DIR / "settings.txt"
@@ -14,8 +27,8 @@ API_BASE_URL = "http://192.168.68.114/api/devices"
 HEARTBEAT_INTERVAL = 180  # 3 minutes
 RETRY_INTERVAL = 60  # 1 minute
 RING_COOLDOWN = 60  # 60 seconds to prevent spamming ring events
+DOORBELL_PIN = 19   # GPIO pin (BCM numbering) for the button, corresponds to physical pin 35.
 
-# Centralized default settings. This is now the single source of truth for defaults.
 DEFAULT_SETTINGS = {
     "device_type_id": 1,
     "version": "0.1"
@@ -26,9 +39,10 @@ HEADERS = {
     "Accept": "application/json",
 }
 
+
 # --- Global State ---
-# Used to prevent spamming the ring event
 last_ring_time = 0
+device_serial_number = None  #
 
 
 # --- Helper Functions ---
@@ -145,8 +159,8 @@ def trigger_update():
         print("✅ Update command executed successfully. The service should restart automatically.")
     except subprocess.CalledProcessError as e:
         print(f"❌ Update script failed with exit code {e.returncode}.")
-        print(f"   stdout: {e.stdout}")
-        print(f"   stderr: {e.stderr}")
+        print(f" stdout: {e.stdout}")
+        print(f" stderr: {e.stderr}")
     except Exception as e:
         print(f"❌ An unexpected error occurred during update: {e}")
     finally:
@@ -214,8 +228,6 @@ def set_switch_state(ip_address, payload):
 
 def blink_effect(ip_address, duration=60, interval=2.0):
     """Controls the blinking effect of a switch for a given duration."""
-    # Note: The initial "power_on" is now handled in send_ring to determine the status.
-    # This function now only handles the subsequent blinking.
     print(f"✨ Starting blink effect for {duration} seconds on {ip_address}")
 
     end_time = time.time() + duration
@@ -232,14 +244,48 @@ def blink_effect(ip_address, duration=60, interval=2.0):
     set_switch_state(ip_address, {"power_on": False})
 
 
-def command_listener(serial_number):
+# --- NEW: GPIO Handling Section ---
+def button_pressed_callback(channel):
+    """Callback function triggered by the button press event."""
+    print(f"🔔 GPIO Pin {channel} pressed! Triggering ring event...")
+    if device_serial_number:
+        send_ring(device_serial_number)
+    else:
+        print("❌ Cannot send ring event, device serial number is not available.")
+
+def setup_gpio():
+    """Sets up the GPIO pin for the doorbell button."""
+    if not GPIO_AVAILABLE:
+        return  # Do nothing if GPIO library isn't available
+
+    print(f"🔌 Setting up GPIO pin {DOORBELL_PIN} for doorbell button...")
+    GPIO.setmode(GPIO.BCM)
+    # Setup pin as input with an internal pull-up resistor.
+    # The button should connect the pin to GND when pressed.
+    GPIO.setup(DOORBELL_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    # Add event detection for a falling edge (high-to-low signal on press)
+    # bouncetime prevents multiple triggers from a single noisy press
+    GPIO.add_event_detect(DOORBELL_PIN, GPIO.FALLING, callback=button_pressed_callback, bouncetime=500)
+    print("✅ GPIO ready. Waiting for button press.")
+
+def cleanup_gpio():
+    """Cleans up GPIO resources on exit."""
+    if GPIO_AVAILABLE:
+        print("🧹 Cleaning up GPIO resources.")
+        GPIO.cleanup()
+
+
+def command_listener():
     """Listens for user commands like 'ring' or 'exit' in a separate thread."""
     while True:
         try:
             command = input()
             if command.lower() == "ring":
-                print("⌨️  Manual ring command received.")
-                send_ring(serial_number)
+                print("⌨️ Manual ring command received.")
+                if device_serial_number:
+                    send_ring(device_serial_number)
+                else:
+                    print("❌ Cannot ring, device not initialized.")
             elif command.lower() == "exit":
                 print("...Exiting program...")
                 # Use os._exit for a hard stop, necessary when threads are running
@@ -251,17 +297,28 @@ def command_listener(serial_number):
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    settings = setup_device()
-    serial = settings["serial_number"]
+    try:
+        settings = setup_device()
+        device_serial_number = settings["serial_number"]  # Set the global serial number
 
-    # Start the command listener in a separate thread
-    listener_thread = threading.Thread(target=command_listener, args=(serial,), daemon=True)
-    listener_thread.start()
+        # Start the command listener in a separate thread
+        listener_thread = threading.Thread(target=command_listener, daemon=True)
+        listener_thread.start()
 
-    print("--- Device is running. Waiting for events. ---")
-    print("--- Type 'ring' to test, or 'exit' to quit. ---")
+        # NEW: Setup GPIO now that we have the serial number
+        setup_gpio()
 
-    while True:
-        send_heartbeat(serial)
-        print(f"--- Waiting for {HEARTBEAT_INTERVAL} seconds... ---")
-        time.sleep(HEARTBEAT_INTERVAL)
+        print("--- Device is running. Waiting for events. ---")
+        print("--- Type 'ring' to test, or 'exit' to quit. ---")
+
+        while True:
+            send_heartbeat(device_serial_number)
+            print(f"--- Waiting for {HEARTBEAT_INTERVAL} seconds... ---")
+            time.sleep(HEARTBEAT_INTERVAL)
+
+    except (KeyboardInterrupt, SystemExit):
+        print("\n--- Program interrupted. Shutting down. ---")
+    finally:
+
+        cleanup_gpio()
+        print("--- Shutdown complete. ---")
