@@ -16,7 +16,7 @@ except (RuntimeError, ImportError):
 
 BASE_DIR = Path("/var/silentdoorbell")
 SETTINGS_FILE = BASE_DIR / "settings.txt"
-API_BASE_URL = "http://192.168.68.114/api/devices"
+API_BASE_URL = "https://silentdoorbell.edu/api/devices"
 HEARTBEAT_INTERVAL = 180  # 3 minutes
 RETRY_INTERVAL = 60  # 1 minute
 RING_COOLDOWN = 60  # 60 seconds to prevent spamming ring events
