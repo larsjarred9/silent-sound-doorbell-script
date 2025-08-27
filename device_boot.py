@@ -171,7 +171,8 @@ def set_switch_state(ip_address, payload):
         response = requests.put(state_url, json=payload, timeout=2)
         response.raise_for_status()
         return True
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
+        print(f"❌ HomeWizard API call to {ip_address} failed. Error: {e}")
         return False
 
 
