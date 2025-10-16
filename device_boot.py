@@ -9,20 +9,38 @@ import os
 
 try:
     import RPi.GPIO as GPIO
+
     GPIO_AVAILABLE = True
 except (RuntimeError, ImportError):
-    print("⚠️ RPi.GPIO library not found or not running on a Pi. GPIO functionality disabled.")
+    print("⚠️ RPi.GPIO library not found. GPIO functionality disabled.")
     GPIO_AVAILABLE = False
 
+try:
+    import board
+    from PIL import Image, ImageDraw, ImageFont
+    import adafruit_ssd1306
+
+    i2c = board.I2C()
+    oled = adafruit_ssd1306.SSD1306_I2C(128, 32, i2c, addr=0x3c)
+    oled.fill(0)
+    oled.show()
+    OLED_AVAILABLE = True
+    print("✅ OLED Screen initialized successfully.")
+except (ValueError, ImportError, NotImplementedError):
+    print("⚠️ OLED Screen not found. Screen functionality disabled.")
+    OLED_AVAILABLE = False
+
+
+# --- Constants and Configuration ---
 BASE_DIR = Path("/var/silentdoorbell")
 SETTINGS_FILE = BASE_DIR / "settings.txt"
 API_BASE_URL = "https://silentdoorbell.edu.speetjens.net/api/devices"
-HEARTBEAT_INTERVAL = 180  # 3 minutes
-RETRY_INTERVAL = 60  # 1 minute
-RING_COOLDOWN = 60  # 60 seconds to prevent spamming ring events
+HEARTBEAT_INTERVAL = 180
+RETRY_INTERVAL = 60
+RING_COOLDOWN = 60
 DOORBELL_PIN = 19
 LED_PIN = 13
-LED_ON_DURATION = 3  # Led stays on for 3 seconds
+LED_ON_DURATION = 3
 
 DEFAULT_SETTINGS = {
     "device_type_id": 1,
@@ -36,6 +54,32 @@ HEADERS = {
 
 last_ring_time = 0
 device_serial_number = None
+
+
+def oled_display_message(line1, line2=""):
+    if not OLED_AVAILABLE:
+        return
+    try:
+        image = Image.new("1", (oled.width, oled.height))
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.load_default()
+        draw.text((0, 0), line1, font=font, fill=255)
+        draw.text((0, 16), line2, font=font, fill=255)
+        oled.image(image)
+        oled.show()
+    except Exception as e:
+        print(f"❌ Error updating OLED screen: {e}")
+
+
+def oled_clear():
+    if not OLED_AVAILABLE:
+        return
+    try:
+        oled.fill(0)
+        oled.show()
+    except Exception as e:
+        print(f"❌ Error clearing OLED screen: {e}")
+
 
 def load_or_create_settings():
     if not SETTINGS_FILE.exists():
@@ -59,6 +103,7 @@ def save_settings(data):
     except IOError as e:
         print(f"❌ CRITICAL ERROR: Could not write to settings file. Error: {e}")
 
+
 def setup_device():
     settings = load_or_create_settings()
     if "serial_number" in settings:
@@ -66,6 +111,7 @@ def setup_device():
         return settings
 
     print("🔧 Device not configured. Requesting new serial number...")
+    oled_display_message("Setup Starten...", "Wachten op server...")
     payload = {
         "device_type": settings["device_type_id"],
         "version": settings["version"]
@@ -80,13 +126,17 @@ def setup_device():
             serial = data.get("serial_number")
             if serial:
                 print(f"✅ Received serial_number: {serial}")
+                oled_display_message("Serial Nummer:", serial)
                 settings["serial_number"] = serial
                 save_settings(settings)
+                time.sleep(5)
                 return settings
             else:
                 print("⚠️ No serial_number in response. Retrying in 60s...")
+                oled_display_message("Setup Fout...", "Opnieuw proberen...")
         except requests.exceptions.RequestException as e:
             print(f"❌ Network error during setup: {e}")
+            oled_display_message("Netwerk Fout...", "Controleer kabel.");
         except Exception as e:
             print(f"❌ An unexpected error occurred during setup: {e}")
         time.sleep(RETRY_INTERVAL)
@@ -137,6 +187,10 @@ def send_ring(serial_number):
         print("🚫 Ring event ignored due to cooldown.")
         return
     last_ring_time = current_time
+
+    print("OLED: Displaying ring message.")
+    oled_display_message("Visuele deurbel.", "Een moment geduld...")
+    threading.Timer(RING_COOLDOWN, oled_clear).start()
 
     settings = load_or_create_settings()
     homewizard_ip = None
@@ -193,52 +247,38 @@ def blink_effect(ip_address, duration=60, interval=2.0):
     set_switch_state(ip_address, {"power_on": False})
 
 
-# --- NEW: Function to control the LED ---
 def trigger_led():
     try:
         print(f"💡 LED on pin {LED_PIN} turning ON.")
-        GPIO.output(LED_PIN, GPIO.HIGH)  # Turn LED on
+        GPIO.output(LED_PIN, GPIO.HIGH)
         time.sleep(LED_ON_DURATION)
-        GPIO.output(LED_PIN, GPIO.LOW)  # Turn LED off
+        GPIO.output(LED_PIN, GPIO.LOW)
         print(f"💡 LED on pin {LED_PIN} turned OFF.")
     except Exception as e:
         print(f"❌ Error controlling LED: {e}")
 
 
-# --- GPIO Handling Section using Polling ---
 def doorbell_polling_loop():
-    """
-    Monitors the doorbell GPIO pin using a polling loop.
-    This method is used for maximum compatibility.
-    """
     if not GPIO_AVAILABLE:
         print("ℹ️ GPIO not available, doorbell button polling thread will not start.")
         return
 
-    # Setup GPIO within this thread
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(DOORBELL_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    GPIO.setup(LED_PIN, GPIO.OUT, initial=GPIO.LOW)  # <-- NEW: Setup LED pin as output, initially off
+    GPIO.setup(LED_PIN, GPIO.OUT, initial=GPIO.LOW)
     print(f"✅ GPIO polling started for pin {DOORBELL_PIN}. Waiting for press...")
 
     while True:
-        # Check if the button is pressed (input is LOW because of the pull-up resistor)
         if GPIO.input(DOORBELL_PIN) == GPIO.LOW:
             print(f"🔔 GPIO Pin {DOORBELL_PIN} was pressed!")
-
-            # <-- NEW: Start the LED trigger in a non-blocking thread
             threading.Thread(target=trigger_led).start()
 
             if device_serial_number:
-                # Call the main ring function, which has its own cooldown logic
                 send_ring(device_serial_number)
             else:
                 print("❌ Cannot send ring event, device serial number is not available.")
-            # Wait 1 second after a press to allow the button to be released.
-            # This is a simple debounce.
             time.sleep(1)
 
-        # Wait a short time in every loop to prevent high CPU usage
         time.sleep(0.1)
 
 
@@ -248,7 +288,8 @@ if __name__ == "__main__":
         settings = setup_device()
         device_serial_number = settings["serial_number"]
 
-        # Start the new GPIO polling loop in a separate thread
+        oled_clear()
+
         polling_thread = threading.Thread(target=doorbell_polling_loop, daemon=True)
         polling_thread.start()
 
@@ -262,7 +303,7 @@ if __name__ == "__main__":
     except (KeyboardInterrupt, SystemExit):
         print("\n--- Program interrupted. Shutting down. ---")
     finally:
-        # Clean up GPIO resources on exit
+        oled_clear()
         if GPIO_AVAILABLE:
             GPIO.cleanup()
         print("--- Shutdown complete. ---")
