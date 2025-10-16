@@ -89,6 +89,11 @@ cd "$PROJECT_DIR"
 # Clone or update repo. This logic is now corrected.
 if [ -d ".git" ]; then
     echo "🔄 Updating existing Git repo..."
+    # Check if settings exists if so protect it from being overwritten
+    if [ -f "settings.txt" ]; then
+        echo "🔒 Protecting local settings.txt from being overwritten..."
+        sudo -u "$OWNER_USER" git update-index --assume-unchanged settings.txt
+    fi
     # Run git commands as the directory owner to avoid permission issues
     sudo -u "$OWNER_USER" git pull
 else
