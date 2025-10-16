@@ -21,6 +21,8 @@ HEARTBEAT_INTERVAL = 180  # 3 minutes
 RETRY_INTERVAL = 60  # 1 minute
 RING_COOLDOWN = 60  # 60 seconds to prevent spamming ring events
 DOORBELL_PIN = 19
+LED_PIN = 13
+LED_ON_DURATION = 3  # Led stays on for 3 seconds
 
 DEFAULT_SETTINGS = {
     "device_type_id": 1,
@@ -191,6 +193,18 @@ def blink_effect(ip_address, duration=60, interval=2.0):
     set_switch_state(ip_address, {"power_on": False})
 
 
+# --- NEW: Function to control the LED ---
+def trigger_led():
+    try:
+        print(f"💡 LED on pin {LED_PIN} turning ON.")
+        GPIO.output(LED_PIN, GPIO.HIGH)  # Turn LED on
+        time.sleep(LED_ON_DURATION)
+        GPIO.output(LED_PIN, GPIO.LOW)  # Turn LED off
+        print(f"💡 LED on pin {LED_PIN} turned OFF.")
+    except Exception as e:
+        print(f"❌ Error controlling LED: {e}")
+
+
 # --- GPIO Handling Section using Polling ---
 def doorbell_polling_loop():
     """
@@ -204,12 +218,17 @@ def doorbell_polling_loop():
     # Setup GPIO within this thread
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(DOORBELL_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    GPIO.setup(LED_PIN, GPIO.OUT, initial=GPIO.LOW)  # <-- NEW: Setup LED pin as output, initially off
     print(f"✅ GPIO polling started for pin {DOORBELL_PIN}. Waiting for press...")
 
     while True:
         # Check if the button is pressed (input is LOW because of the pull-up resistor)
         if GPIO.input(DOORBELL_PIN) == GPIO.LOW:
             print(f"🔔 GPIO Pin {DOORBELL_PIN} was pressed!")
+
+            # <-- NEW: Start the LED trigger in a non-blocking thread
+            threading.Thread(target=trigger_led).start()
+
             if device_serial_number:
                 # Call the main ring function, which has its own cooldown logic
                 send_ring(device_serial_number)
