@@ -1,80 +1,75 @@
 #!/bin/bash
 
-# Check if git is installed, install if missing
-if ! command -v git &> /dev/null; then
-  echo "❌ Git not found. Installing git... 🛠️"
-  if command -v apt &> /dev/null; then
-    echo "📦 Updating package list..."
-    sudo apt update
-    echo "⬇️ Installing git package..."
-    sudo apt install git -y
-    echo "✅ Git installed successfully!"
+# --- 1. Initial Dependency Checks ---
+echo "🔎 Checking initial dependencies..."
+
+# List of essential apt packages
+essential_packages=(git python3 python3-pip python3-venv python3-rpi.gpio)
+
+for pkg in "${essential_packages[@]}"; do
+  if ! dpkg -l | grep -q "ii  $pkg "; then
+    echo "❌ $pkg not found. Installing..."
+    sudo apt-get update
+    sudo apt-get install -y "$pkg"
   else
-    echo "⚠️ Package manager apt not found. Please install git manually."
-    exit 1
+    echo "✅ $pkg is already installed."
   fi
+done
+
+# List of packages needed to build the Pillow library
+pillow_deps=(build-essential python3-dev libjpeg-dev zlib1g-dev)
+
+echo "🔎 Checking Pillow build dependencies..."
+for pkg in "${pillow_deps[@]}"; do
+  if ! dpkg -l | grep -q "ii  $pkg "; then
+    echo "❌ $pkg not found. Installing..."
+    sudo apt-get update
+    sudo apt-get install -y "$pkg"
+  else
+    echo "✅ $pkg is already installed."
+  fi
+done
+
+set -e # Exit script if any command fails from here on
+
+# --- 2. Hardware Configuration ---
+echo "⚙️ Configuring Raspberry Pi Hardware Interface..."
+
+# Enable I2C interface non-interactively
+if ! raspi-config nonint get_i2c | grep -q "0"; then
+  echo "🔧 Enabling I2C interface..."
+  sudo raspi-config nonint do_i2c 0
+  NEEDS_REBOOT=true
 else
-  echo "✅ Git is already installed. 👍"
+  echo "✅ I2C is already enabled."
 fi
 
-# Check if python3 is installed, install if missing
-if ! command -v python3 &> /dev/null; then
-  echo "❌ Python 3 not found. Installing python3... 🐍"
-  if command -v apt &> /dev/null; then
-    echo "📦 Updating package list..."
-    sudo apt update
-    echo "⬇️ Installing python3..."
-    sudo apt install python3 -y
-    echo "✅ python3 installed successfully!"
-  else
-    echo "⚠️ Package manager apt not found. Please install python3 manually."
-    exit 1
-  fi
+# Set I2C baud rate for stability if not already set
+BAUDRATE_CONFIG="dtparam=i2c_arm_baudrate=100000"
+CONFIG_FILE="/boot/config.txt"
+if ! grep -q "^${BAUDRATE_CONFIG}" "$CONFIG_FILE"; then
+  echo "🔧 Setting I2C baud rate to 100kHz for stability..."
+  echo "${BAUDRATE_CONFIG}" | sudo tee -a "$CONFIG_FILE" > /dev/null
+  NEEDS_REBOOT=true
 else
-  echo "✅ python3 is already installed. 👍"
+  echo "✅ I2C baud rate is already configured."
 fi
 
-# Check if pip3 is installed, install if missing
-if ! command -v pip3 &> /dev/null; then
-  echo "❌ pip3 not found. Installing python3-pip... 🛠️"
-  if command -v apt &> /dev/null; then
-    echo "📦 Updating package list..."
-    sudo apt update
-    echo "⬇️ Installing python3-pip package..."
-    sudo apt install python3-pip -y
-    echo "✅ pip3 installed successfully!"
-  else
-    echo "⚠️ Package manager apt not found. Please install pip3 manually."
-    exit 1
-  fi
+# Add current user to the i2c group for permissions
+if ! groups "$USER" | grep -q '\bi2c\b'; then
+  echo "🔧 Adding user $USER to the 'i2c' group..."
+  sudo usermod -aG i2c "$USER"
+  NEEDS_REBOOT=true
 else
-  echo "✅ pip3 is already installed. 👍"
+  echo "✅ User $USER is already in the 'i2c' group."
 fi
 
-# Check if the RPi.GPIO Python module is available by trying to import it.
-# This is more reliable than checking for the apt package, as it could have been installed with pip.
-if ! python3 -c "import RPi.GPIO" >/dev/null 2>&1; then
-  echo "❌ RPi.GPIO Python module not found. Installing python3-rpi.gpio... 🛠️"
-  if command -v apt &> /dev/null; then
-    echo "📦 Updating package list..."
-    sudo apt update
-    echo "⬇️ Installing python3-rpi.gpio package..."
-    sudo apt install python3-rpi.gpio -y
-    echo "✅ python3-rpi.gpio installed successfully!"
-  else
-    echo "⚠️ Package manager apt not found. Please install python3-rpi.gpio manually."
-    exit 1
-  fi
-else
-  echo "✅ RPi.GPIO Python module is already installed. 👍"
-fi
-
-set -e
-
+# --- 3. Project Setup & Installation ---
 echo "🔧 Installing Silent Sound Doorbell..."
 
 # Constants
 PROJECT_DIR="/var/silentdoorbell"
+VENV_DIR="$PROJECT_DIR/.venv"
 REPO_URL="https://github.com/larsjarred9/silent-sound-doorbell-script.git"
 SERVICE_NAME="device.service"
 SERVICE_FILE_PATH="/etc/systemd/system/$SERVICE_NAME"
@@ -84,35 +79,43 @@ REQUIREMENTS_FILE="$PROJECT_DIR/requirements.txt"
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "📂 Creating project directory..."
     sudo mkdir -p "$PROJECT_DIR"
-    sudo chown -R $USER:$USER "$PROJECT_DIR"
+    sudo chown -R "$USER:$USER" "$PROJECT_DIR"
 fi
 
+cd "$PROJECT_DIR"
+
 # Clone or update repo
-if [ -d "$PROJECT_DIR/.git" ]; then
+if [ -d ".git" ]; then
     echo "🔄 Updating existing Git repo..."
-    cd "$PROJECT_DIR"
     git pull
 else
-    if [ "$(ls -A "$PROJECT_DIR")" ]; then
+    if [ "$(ls -A .)" ]; then
         echo "⚠️ Directory exists but is not a Git repo. Aborting to prevent overwrite."
         exit 1
     else
         echo "📥 Cloning repo to $PROJECT_DIR..."
-        git clone "$REPO_URL" "$PROJECT_DIR"
+        git clone "$REPO_URL" .
     fi
 fi
 
-# Install Python dependencies system-wide for the service
+# Create and populate Python virtual environment
+if [ ! -d "$VENV_DIR" ]; then
+  echo "🐍 Creating Python virtual environment..."
+  python3 -m venv "$VENV_DIR"
+fi
+
+# Install Python dependencies into the virtual environment
 if [ -f "$REQUIREMENTS_FILE" ]; then
     echo "📦 Installing Python dependencies from requirements.txt..."
-    sudo pip3 install -r "$REQUIREMENTS_FILE"
+    "$VENV_DIR/bin/pip" install -r "$REQUIREMENTS_FILE"
 else
     echo "ℹ️ No requirements.txt found, skipping pip install."
 fi
 
+# --- 4. Service Setup ---
 # Install systemd service file
 if [ -f "$PROJECT_DIR/$SERVICE_NAME" ]; then
-    echo "🛠 Installing systemd service..."
+    echo "🛠️ Installing systemd service..."
     sudo cp "$PROJECT_DIR/$SERVICE_NAME" "$SERVICE_FILE_PATH"
 else
     echo "❌ Service file $SERVICE_NAME not found in repo. Aborting."
@@ -125,8 +128,13 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME"
 sudo systemctl restart "$SERVICE_NAME"
 
+# --- 5. Final Instructions ---
 echo "✅ Installation complete!"
 echo "📂 Project directory: $PROJECT_DIR"
-echo "📄 settings.txt: $PROJECT_DIR/settings.txt"
-echo "🛠 Service file: $SERVICE_FILE_PATH"
+echo "🛠️ Service file: $SERVICE_FILE_PATH"
 echo "📜 View logs: journalctl -u $SERVICE_NAME -f"
+
+if [ "$NEEDS_REBOOT" = true ]; then
+  echo -e "\n\n⚠️ IMPORTANT: A reboot is required for hardware changes to take effect."
+  echo "Please run 'sudo reboot' now."
+fi
