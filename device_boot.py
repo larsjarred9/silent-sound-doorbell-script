@@ -7,6 +7,7 @@ import subprocess
 import sys
 import os
 
+# --- Hardware Initialization ---
 try:
     import RPi.GPIO as GPIO
 
@@ -26,39 +27,32 @@ try:
     oled.show()
     OLED_AVAILABLE = True
     print("✅ OLED Screen initialized successfully.")
-except (ValueError, ImportError, NotImplementedError):
+except Exception:
     print("⚠️ OLED Screen not found. Screen functionality disabled.")
     OLED_AVAILABLE = False
-
 
 # --- Constants and Configuration ---
 BASE_DIR = Path("/var/silentdoorbell")
 SETTINGS_FILE = BASE_DIR / "settings.txt"
 API_BASE_URL = "https://silentdoorbell.edu.speetjens.net/api/devices"
-HEARTBEAT_INTERVAL = 180
+SETUP_HEARTBEAT_INTERVAL = 15
+NORMAL_HEARTBEAT_INTERVAL = 15
 RETRY_INTERVAL = 60
 RING_COOLDOWN = 60
 DOORBELL_PIN = 19
 LED_PIN = 13
 LED_ON_DURATION = 3
 
-DEFAULT_SETTINGS = {
-    "device_type_id": 1,
-    "version": "0.1"
-}
-
-HEADERS = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-}
+DEFAULT_SETTINGS = {"device_type_id": 1, "version": "0.1"}
+HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
 last_ring_time = 0
 device_serial_number = None
 
 
+# --- OLED Helper Functions ---
 def oled_display_message(line1, line2=""):
-    if not OLED_AVAILABLE:
-        return
+    if not OLED_AVAILABLE: return
     try:
         image = Image.new("1", (oled.width, oled.height))
         draw = ImageDraw.Draw(image)
@@ -72,8 +66,7 @@ def oled_display_message(line1, line2=""):
 
 
 def oled_clear():
-    if not OLED_AVAILABLE:
-        return
+    if not OLED_AVAILABLE: return
     try:
         oled.fill(0)
         oled.show()
@@ -81,6 +74,7 @@ def oled_clear():
         print(f"❌ Error clearing OLED screen: {e}")
 
 
+# --- Core Functions ---
 def load_or_create_settings():
     if not SETTINGS_FILE.exists():
         print(f"⚠️ Settings file not found. Creating a new one at {SETTINGS_FILE}")
@@ -112,10 +106,7 @@ def setup_device():
 
     print("🔧 Device not configured. Requesting new serial number...")
     oled_display_message("Setup Starten...", "Wachten op server...")
-    payload = {
-        "device_type": settings["device_type_id"],
-        "version": settings["version"]
-    }
+    payload = {"device_type": settings["device_type_id"], "version": settings["version"]}
 
     while True:
         try:
@@ -126,17 +117,16 @@ def setup_device():
             serial = data.get("serial_number")
             if serial:
                 print(f"✅ Received serial_number: {serial}")
-                oled_display_message("Serial Nummer:", serial)
+                oled_display_message("Apparaat Serienr:", serial)
                 settings["serial_number"] = serial
                 save_settings(settings)
-                time.sleep(5)
                 return settings
             else:
                 print("⚠️ No serial_number in response. Retrying in 60s...")
                 oled_display_message("Setup Fout...", "Opnieuw proberen...")
         except requests.exceptions.RequestException as e:
             print(f"❌ Network error during setup: {e}")
-            oled_display_message("Netwerk Fout...", "Controleer kabel.");
+            oled_display_message("Netwerk Fout...", "Controleer kabel.")
         except Exception as e:
             print(f"❌ An unexpected error occurred during setup: {e}")
         time.sleep(RETRY_INTERVAL)
@@ -151,15 +141,29 @@ def send_heartbeat(serial_number):
         print("✅ Heartbeat sent successfully.")
         data = response.json()
         settings = load_or_create_settings()
+
+        user_id = data.get("user_id")
+        if "user_id" not in settings and user_id is not None:
+            print("✅ Device has been claimed by a user! Updating settings and clearing screen.")
+            settings["user_id"] = user_id
+            save_settings(settings)
+            oled_clear()
+
         local_version = settings.get("version")
         server_version = data.get("device_type", {}).get("latest_version")
         if server_version and local_version and server_version != local_version:
             print(f"🚀 New version available! Local: {local_version}, Server: {server_version}. Starting update...")
             trigger_update()
+
         if "integrations" in data:
-            settings["integrations"] = data["integrations"]
-            save_settings(settings)
-            print("💾 Updated local settings with server integration data.")
+            server_integrations = data["integrations"]
+            local_integrations = settings.get("integrations", None)
+            if server_integrations != local_integrations:
+                print("🔄 New integration data from server. Updating local settings...")
+                settings["integrations"] = server_integrations
+                save_settings(settings)
+                print("💾 Updated local settings with server integration data.")
+
     except requests.exceptions.RequestException as e:
         print(f"❌ Network error during heartbeat: {e}")
     except json.JSONDecodeError:
@@ -181,13 +185,6 @@ def trigger_update():
 
 
 def send_ring(serial_number):
-    global last_ring_time
-    current_time = time.time()
-    if current_time - last_ring_time < RING_COOLDOWN:
-        print("🚫 Ring event ignored due to cooldown.")
-        return
-    last_ring_time = current_time
-
     print("OLED: Displaying ring message.")
     oled_display_message("Visuele deurbel.", "Een moment geduld...")
     threading.Timer(RING_COOLDOWN, oled_clear).start()
@@ -248,6 +245,7 @@ def blink_effect(ip_address, duration=60, interval=2.0):
 
 
 def trigger_led():
+    if not GPIO_AVAILABLE: return
     try:
         print(f"💡 LED on pin {LED_PIN} turning ON.")
         GPIO.output(LED_PIN, GPIO.HIGH)
@@ -259,6 +257,7 @@ def trigger_led():
 
 
 def doorbell_polling_loop():
+    global last_ring_time
     if not GPIO_AVAILABLE:
         print("ℹ️ GPIO not available, doorbell button polling thread will not start.")
         return
@@ -270,13 +269,28 @@ def doorbell_polling_loop():
 
     while True:
         if GPIO.input(DOORBELL_PIN) == GPIO.LOW:
-            print(f"🔔 GPIO Pin {DOORBELL_PIN} was pressed!")
-            threading.Thread(target=trigger_led).start()
+            current_time = time.time()
+            settings = load_or_create_settings()
 
+            if "user_id" not in settings or settings["user_id"] is None:
+                print("🚫 Ring event ignored: Device setup is not complete (not claimed).")
+                time.sleep(1)
+                continue
+
+            if current_time - last_ring_time < RING_COOLDOWN:
+                print("🚫 Ring event ignored due to cooldown.")
+                time.sleep(1)
+                continue
+
+            last_ring_time = current_time
+            print(f"🔔 GPIO Pin {DOORBELL_PIN} was pressed!")
+
+            threading.Thread(target=trigger_led).start()
             if device_serial_number:
                 send_ring(device_serial_number)
             else:
                 print("❌ Cannot send ring event, device serial number is not available.")
+
             time.sleep(1)
 
         time.sleep(0.1)
@@ -288,7 +302,12 @@ if __name__ == "__main__":
         settings = setup_device()
         device_serial_number = settings["serial_number"]
 
-        oled_clear()
+        if "user_id" in settings and settings["user_id"] is not None:
+            print("ℹ️ Device is claimed. Screen will be blank.")
+            oled_clear()
+        else:
+            print("ℹ️ Device is not claimed. Displaying serial number.")
+            oled_display_message("Apparaat Serienr:", device_serial_number)
 
         polling_thread = threading.Thread(target=doorbell_polling_loop, daemon=True)
         polling_thread.start()
@@ -297,8 +316,16 @@ if __name__ == "__main__":
 
         while True:
             send_heartbeat(device_serial_number)
-            print(f"--- Waiting for {HEARTBEAT_INTERVAL} seconds... ---")
-            time.sleep(HEARTBEAT_INTERVAL)
+
+            # Use different heartbeat intervals depending on claimed status
+            current_settings = load_or_create_settings()
+            if "user_id" in current_settings and current_settings["user_id"] is not None:
+                interval = NORMAL_HEARTBEAT_INTERVAL
+            else:
+                interval = SETUP_HEARTBEAT_INTERVAL
+
+            print(f"--- Waiting for {interval} seconds... ---")
+            time.sleep(interval)
 
     except (KeyboardInterrupt, SystemExit):
         print("\n--- Program interrupted. Shutting down. ---")
