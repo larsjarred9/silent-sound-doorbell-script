@@ -76,37 +76,38 @@ SERVICE_FILE_PATH="/etc/systemd/system/$SERVICE_NAME"
 REQUIREMENTS_FILE="$PROJECT_DIR/requirements.txt"
 
 # Ensure the project directory exists and set correct permissions
+# We define the owner user here. SUDO_USER is the person who ran sudo.
+OWNER_USER=${SUDO_USER:-$(whoami)}
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "📂 Creating project directory..."
     sudo mkdir -p "$PROJECT_DIR"
-    sudo chown -R "$USER:$USER" "$PROJECT_DIR"
+    sudo chown -R "$OWNER_USER:$OWNER_USER" "$PROJECT_DIR"
 fi
 
 cd "$PROJECT_DIR"
 
-# Clone or update repo
+# Clone or update repo. This logic is now corrected.
 if [ -d ".git" ]; then
     echo "🔄 Updating existing Git repo..."
-    git pull
+    # Run git commands as the directory owner to avoid permission issues
+    sudo -u "$OWNER_USER" git pull
 else
-    if [ "$(ls -A .)" ]; then
-        echo "⚠️ Directory exists but is not a Git repo. Aborting to prevent overwrite."
-        exit 1
-    else
-        echo "📥 Cloning repo to $PROJECT_DIR..."
-        git clone "$REPO_URL" .
-    fi
+    echo "📥 Cloning repo into the new directory..."
+    # Clone into the current empty directory (.)
+    sudo -u "$OWNER_USER" git clone "$REPO_URL" .
 fi
 
 # Create and populate Python virtual environment
 if [ ! -d "$VENV_DIR" ]; then
   echo "🐍 Creating Python virtual environment..."
-  python3 -m venv "$VENV_DIR"
+  # Run as owner to ensure venv is owned correctly
+  sudo -u "$OWNER_USER" python3 -m venv "$VENV_DIR"
 fi
 
 # Install Python dependencies into the virtual environment
 if [ -f "$REQUIREMENTS_FILE" ]; then
     echo "📦 Installing Python dependencies from requirements.txt..."
+    # The pip command itself doesn't need sudo as it writes to the owned venv
     "$VENV_DIR/bin/pip" install -r "$REQUIREMENTS_FILE"
 else
     echo "ℹ️ No requirements.txt found, skipping pip install."
