@@ -7,7 +7,8 @@ echo "🔎 Checking initial dependencies..."
 essential_packages=(git python3 python3-pip python3-venv python3-rpi.gpio)
 
 for pkg in "${essential_packages[@]}"; do
-  if ! dpkg -l | grep -q "ii  $pkg "; then
+  # Use dpkg -s for a more reliable check
+  if ! dpkg -s "$pkg" >/dev/null 2>&1; then
     echo "❌ $pkg not found. Installing..."
     sudo apt-get update
     sudo apt-get install -y "$pkg"
@@ -21,7 +22,8 @@ pillow_deps=(build-essential python3-dev libjpeg-dev zlib1g-dev)
 
 echo "🔎 Checking Pillow build dependencies..."
 for pkg in "${pillow_deps[@]}"; do
-  if ! dpkg -l | grep -q "ii  $pkg "; then
+  # Use dpkg -s for a more reliable check here as well
+  if ! dpkg -s "$pkg" >/dev/null 2>&1; then
     echo "❌ $pkg not found. Installing..."
     sudo apt-get update
     sudo apt-get install -y "$pkg"
@@ -76,7 +78,6 @@ SERVICE_FILE_PATH="/etc/systemd/system/$SERVICE_NAME"
 REQUIREMENTS_FILE="$PROJECT_DIR/requirements.txt"
 
 # Ensure the project directory exists and set correct permissions
-# We define the owner user here. SUDO_USER is the person who ran sudo.
 OWNER_USER=${SUDO_USER:-$(whoami)}
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "📂 Creating project directory..."
@@ -86,33 +87,28 @@ fi
 
 cd "$PROJECT_DIR"
 
-# Clone or update repo. This logic is now corrected.
+# Clone or update repo
 if [ -d ".git" ]; then
     echo "🔄 Updating existing Git repo..."
-    # Check if settings exists if so protect it from being overwritten
     if [ -f "settings.txt" ]; then
         echo "🔒 Protecting local settings.txt from being overwritten..."
         sudo -u "$OWNER_USER" git update-index --assume-unchanged settings.txt
     fi
-    # Run git commands as the directory owner to avoid permission issues
     sudo -u "$OWNER_USER" git pull
 else
     echo "📥 Cloning repo into the new directory..."
-    # Clone into the current empty directory (.)
     sudo -u "$OWNER_USER" git clone "$REPO_URL" .
 fi
 
 # Create and populate Python virtual environment
 if [ ! -d "$VENV_DIR" ]; then
   echo "🐍 Creating Python virtual environment..."
-  # Run as owner to ensure venv is owned correctly
   sudo -u "$OWNER_USER" python3 -m venv "$VENV_DIR"
 fi
 
 # Install Python dependencies into the virtual environment
 if [ -f "$REQUIREMENTS_FILE" ]; then
     echo "📦 Installing Python dependencies from requirements.txt..."
-    # The pip command itself doesn't need sudo as it writes to the owned venv
     "$VENV_DIR/bin/pip" install -r "$REQUIREMENTS_FILE"
 else
     echo "ℹ️ No requirements.txt found, skipping pip install."
