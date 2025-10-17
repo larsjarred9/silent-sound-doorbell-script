@@ -7,10 +7,8 @@ import subprocess
 import sys
 import os
 
-# --- Hardware Initialization ---
 try:
     import RPi.GPIO as GPIO
-
     GPIO_AVAILABLE = True
 except (RuntimeError, ImportError):
     print("⚠️ RPi.GPIO library not found. GPIO functionality disabled.")
@@ -20,7 +18,6 @@ try:
     import board
     from PIL import Image, ImageDraw, ImageFont
     import adafruit_ssd1306
-
     i2c = board.I2C()
     oled = adafruit_ssd1306.SSD1306_I2C(128, 32, i2c, addr=0x3c)
     oled.fill(0)
@@ -31,7 +28,6 @@ except Exception:
     print("⚠️ OLED Screen not found. Screen functionality disabled.")
     OLED_AVAILABLE = False
 
-# --- Constants and Configuration ---
 BASE_DIR = Path("/var/silentdoorbell")
 SETTINGS_FILE = BASE_DIR / "settings.txt"
 API_BASE_URL = "https://silentdoorbell.edu.speetjens.net/api/devices"
@@ -49,8 +45,6 @@ HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 last_ring_time = 0
 device_serial_number = None
 
-
-# --- OLED Helper Functions ---
 def oled_display_message(line1, line2=""):
     if not OLED_AVAILABLE: return
     try:
@@ -64,7 +58,6 @@ def oled_display_message(line1, line2=""):
     except Exception as e:
         print(f"❌ Error updating OLED screen: {e}")
 
-
 def oled_clear():
     if not OLED_AVAILABLE: return
     try:
@@ -73,8 +66,6 @@ def oled_clear():
     except Exception as e:
         print(f"❌ Error clearing OLED screen: {e}")
 
-
-# --- Core Functions ---
 def load_or_create_settings():
     if not SETTINGS_FILE.exists():
         print(f"⚠️ Settings file not found. Creating a new one at {SETTINGS_FILE}")
@@ -88,7 +79,6 @@ def load_or_create_settings():
         save_settings(DEFAULT_SETTINGS)
         return DEFAULT_SETTINGS
 
-
 def save_settings(data):
     try:
         BASE_DIR.mkdir(parents=True, exist_ok=True)
@@ -97,11 +87,16 @@ def save_settings(data):
     except IOError as e:
         print(f"❌ CRITICAL ERROR: Could not write to settings file. Error: {e}")
 
-
 def setup_device():
     settings = load_or_create_settings()
     if "serial_number" in settings:
         print(f"✅ Device already configured with serial: {settings['serial_number']}")
+        if "user_id" not in settings or settings.get("user_id") is None:
+            print("ℹ️ Device not claimed on boot. Displaying serial number.")
+            oled_display_message("Apparaat Serienr:", settings["serial_number"])
+        else:
+            print("ℹ️ Device already claimed on boot. Clearing screen.")
+            oled_clear()
         return settings
 
     print("🔧 Device not configured. Requesting new serial number...")
@@ -130,7 +125,6 @@ def setup_device():
         except Exception as e:
             print(f"❌ An unexpected error occurred during setup: {e}")
         time.sleep(RETRY_INTERVAL)
-
 
 def send_heartbeat(serial_number):
     heartbeat_url = f"{API_BASE_URL}/{serial_number}/heartbeat"
@@ -169,7 +163,6 @@ def send_heartbeat(serial_number):
     except json.JSONDecodeError:
         print("❌ Could not decode JSON from heartbeat response.")
 
-
 def trigger_update():
     update_command = "curl -sS https://raw.githubusercontent.com/larsjarred9/silent-sound-doorbell-script/refs/heads/deployer/deployer.sh | sudo bash"
     print(f"🏃 Executing update command: {update_command}")
@@ -182,7 +175,6 @@ def trigger_update():
     finally:
         print("...Exiting script to allow update to complete...")
         sys.exit()
-
 
 def send_ring(serial_number):
     print("OLED: Displaying ring message.")
@@ -216,7 +208,6 @@ def send_ring(serial_number):
     except requests.exceptions.RequestException as e:
         print(f"❌ Network error during ring event: {e}")
 
-
 def set_switch_state(ip_address, payload):
     state_url = f"http://{ip_address}/api/v1/state"
     print(f"💡 Sending state to {ip_address}: {json.dumps(payload)}")
@@ -227,7 +218,6 @@ def set_switch_state(ip_address, payload):
     except requests.exceptions.RequestException as e:
         print(f"❌ HomeWizard API call to {ip_address} failed. Error: {e}")
         return False
-
 
 def blink_effect(ip_address, duration=60, interval=2.0):
     print(f"✨ Starting blink effect for {duration} seconds on {ip_address}")
@@ -243,7 +233,6 @@ def blink_effect(ip_address, duration=60, interval=2.0):
     print(f"✨ Blink effect finished. Turning switch off.")
     set_switch_state(ip_address, {"power_on": False})
 
-
 def trigger_led():
     if not GPIO_AVAILABLE: return
     try:
@@ -254,7 +243,6 @@ def trigger_led():
         print(f"💡 LED on pin {LED_PIN} turned OFF.")
     except Exception as e:
         print(f"❌ Error controlling LED: {e}")
-
 
 def doorbell_polling_loop():
     global last_ring_time
@@ -295,19 +283,10 @@ def doorbell_polling_loop():
 
         time.sleep(0.1)
 
-
-# --- Main Execution ---
 if __name__ == "__main__":
     try:
         settings = setup_device()
         device_serial_number = settings["serial_number"]
-
-        if "user_id" in settings and settings["user_id"] is not None:
-            print("ℹ️ Device is claimed. Screen will be blank.")
-            oled_clear()
-        else:
-            print("ℹ️ Device is not claimed. Displaying serial number.")
-            oled_display_message("Apparaat Serienr:", device_serial_number)
 
         polling_thread = threading.Thread(target=doorbell_polling_loop, daemon=True)
         polling_thread.start()
@@ -317,7 +296,6 @@ if __name__ == "__main__":
         while True:
             send_heartbeat(device_serial_number)
 
-            # Use different heartbeat intervals depending on claimed status
             current_settings = load_or_create_settings()
             if "user_id" in current_settings and current_settings["user_id"] is not None:
                 interval = NORMAL_HEARTBEAT_INTERVAL
