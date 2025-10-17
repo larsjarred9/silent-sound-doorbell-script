@@ -18,7 +18,7 @@ for pkg in "${essential_packages[@]}"; do
 done
 
 # List of packages needed to build the Pillow library
-pillow_deps=(build-essential python3-dev libjpeg-dev zlib1g-dev)
+pillow_deps=(build-essential python3-dev libjpeg-dev zlib1g-dev libopenjp2-7)
 
 echo "🔎 Checking Pillow build dependencies..."
 for pkg in "${pillow_deps[@]}"; do
